@@ -1,5 +1,5 @@
 // 앱 화면 파일을 기기에 저장해 두어 인터넷이 없어도 열리게 해요. 출석 기록은 Firebase가 따로 저장·동기화해요.
-const CACHE = "attendance-v1";
+const CACHE = "attendance-v2";
 const SHELL = ["./", "index.html", "firebase-config.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
