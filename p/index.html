@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>출결 알림</title>
+<meta name="theme-color" content="#1f5d4c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="출결 알림">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+:root{--bg:#f3f5f1;--paper:#fff;--ink:#1d2722;--muted:#5e6b64;--line:#dde3dd;--accent:#1f5d4c;--accent-soft:#e1efe9;--ok:#23824f;--no:#c8372d}
+@media (prefers-color-scheme:dark){:root{--bg:#141a17;--paper:#1c2420;--ink:#e8eee9;--muted:#9aa8a0;--line:#2d3833;--accent:#7cc7ad;--accent-soft:#1e332b;--ok:#5fcf8f;--no:#f07a6f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+main{max-width:480px;margin:0 auto;padding:28px 0 40px;display:grid;gap:14px}
+h1{font-size:22px;margin:0}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:16px;display:grid;gap:10px}
+.kid{font-size:18px;font-weight:700}
+.muted{color:var(--muted);font-size:14px}
+.btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:12px;min-height:48px;padding:0 16px;font:inherit;font-weight:600}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--paper)}
+.ok{color:var(--ok);font-weight:700} .no{color:var(--no);font-weight:600}
+input{border:1px solid var(--line);border-radius:12px;min-height:48px;padding:0 12px;font:inherit;background:var(--bg);color:var(--ink);width:100%}
+ol{margin:0;padding-left:20px}
+</style>
+</head>
+<body>
+<main id="app"><h1>출결 알림</h1><div class="muted">불러오는 중이에요…</div></main>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="../firebase-config.js"></script>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+const store = { get(k, d){ try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch(e){ return d; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
+const codeOf = s => { const m = String(s || "").match(/[?&]c=([A-Za-z0-9]{12,40})/) || String(s || "").trim().match(/^([A-Za-z0-9]{12,40})$/); return m ? m[1] : null; };
+
+firebase.initializeApp(self.FIREBASE_CONFIG);
+const db = firebase.firestore();
+let codes = store.get("codes", []), links = {}, state = "", msg = "";
+const fromUrl = codeOf(location.search);
+if (fromUrl && !codes.includes(fromUrl)) { codes.push(fromUrl); store.set("codes", codes); }
+
+async function load(){
+  for (const c of codes) { try { const d = await db.collection("links").doc(c).get(); links[c] = d.exists ? d.data() : null; } catch(e){ links[c] = undefined; } }
+  render();
+  if (pushReady() && Notification.permission === "granted") register(false);
+}
+function pushReady(){ return "serviceWorker" in navigator && "Notification" in window && "PushManager" in window; }
+async function sha(s){ const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2,"0")).join("").slice(0,40); }
+async function register(ask){
+  try {
+    if (!self.FCM_VAPID_KEY) { state = "nokey"; return render(); }
+    if (ask) { const p = await Notification.requestPermission(); if (p !== "granted") { state = "denied"; return render(); } }
+    const reg = await navigator.serviceWorker.register("sw.js", {scope: "./"});
+    await navigator.serviceWorker.ready;
+    const token = await firebase.messaging().getToken({vapidKey: self.FCM_VAPID_KEY, serviceWorkerRegistration: reg});
+    if (!token) throw new Error("no token");
+    const id = await sha(token), joined = store.get("joined", {});
+    for (const c of codes) {
+      if (!links[c]) continue;
+      await db.collection("links").doc(c).collection("devices").doc(id).set({token, ua: navigator.userAgent.slice(0,200), at: firebase.firestore.FieldValue.serverTimestamp()});
+      if (!joined[c]) { await db.collection("links").doc(c).update({joined: firebase.firestore.FieldValue.increment(1)}).catch(() => {}); joined[c] = 1; }
+    }
+    store.set("joined", joined); state = "on";
+  } catch(e){ state = "error"; msg = e.message || String(e); }
+  render();
+}
+function render(){
+  let h = `<h1>출결 알림</h1>`;
+  const valid = codes.filter(c => links[c]);
+  if (!codes.length) h += `<div class="card"><div>학원에서 받은 알림 링크를 열어 주세요.</div></div>`;
+  for (const c of codes) {
+    const l = links[c];
+    h += `<div class="card">${l ? `<div class="kid">${esc((l.names || []).join(", "))}</div><div class="muted">${esc(l.academy || "학원")} 출석·하원 알림</div>`
+      : l === null ? `<div class="no">사용할 수 없는 링크예요.</div><div class="muted">학원에 새 링크를 요청해 주세요.</div>` : `<div class="no">인터넷 연결을 확인해 주세요.</div>`}</div>`;
+  }
+  if (valid.length) {
+    if (isIOS && !standalone) {
+      h += `<div class="card"><b>아이폰은 홈 화면에 추가해야 알림을 받을 수 있어요</b><ol><li>Safari 아래쪽 <b>공유</b> 버튼(네모에 화살표)을 눌러요.</li><li><b>홈 화면에 추가</b>를 눌러요.</li><li>홈 화면에 생긴 <b>출결 알림</b> 아이콘으로 열고 "알림 받기"를 눌러요.</li></ol><div class="muted">iOS 16.4 이상에서 돼요. 카카오톡 안에서 열었다면 오른쪽 아래 메뉴에서 "Safari로 열기"를 먼저 눌러 주세요.</div></div>`;
+    } else if (!pushReady()) {
+      h += `<div class="card"><div class="no">이 브라우저에서는 알림을 받을 수 없어요.</div><div class="muted">휴대폰의 Chrome이나 Safari로 열어 주세요.</div></div>`;
+    } else if (state === "on") {
+      h += `<div class="card"><div class="ok">✓ 알림을 받고 있어요</div><div class="muted">학생이 학원에 도착하거나 하원하면 이 휴대폰으로 알려 드려요. 앱을 닫아 두셔도 돼요.</div></div>`;
+    } else {
+      h += `<div class="card"><button class="btn primary" id="on">알림 받기</button>
+        ${state === "denied" ? `<div class="no">알림이 꺼져 있어요. 휴대폰 설정에서 이 앱의 알림을 허용한 뒤 다시 눌러 주세요.</div>` : ""}
+        ${state === "nokey" ? `<div class="no">학원에서 알림 설정을 아직 마치지 않았어요.</div>` : ""}
+        ${state === "error" ? `<div class="no">알림을 켜지 못했어요. 잠시 후 다시 눌러 주세요.</div><div class="muted">${esc(msg)}</div>` : ""}
+        ${!isIOS && !standalone ? `<div class="muted">브라우저 메뉴에서 "홈 화면에 추가"를 해 두면 찾기 쉬워요.</div>` : ""}</div>`;
+    }
+  }
+  h += `<div class="card"><div class="muted">다른 자녀의 링크도 받으셨다면 여기에 붙여 넣으세요.</div><input id="code" placeholder="링크 붙여 넣기" autocomplete="off"><button class="btn" id="add">추가</button></div>`;
+  document.getElementById("app").innerHTML = h;
+}
+document.getElementById("app").addEventListener("click", e => {
+  if (e.target.id === "on") register(true);
+  if (e.target.id === "add") {
+    const c = codeOf(document.getElementById("code").value);
+    if (!c) return alertMsg();
+    if (!codes.includes(c)) { codes.push(c); store.set("codes", codes); }
+    load().then(() => { if (state === "on") register(false); });
+  }
+});
+function alertMsg(){ document.getElementById("code").value = ""; document.getElementById("code").placeholder = "링크를 다시 확인해 주세요"; }
+load();
+</script>
+</body>
+</html>

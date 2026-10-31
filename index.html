@@ -282,7 +282,7 @@ function setSync(){
   el.querySelector("span").textContent = mode === "db" ? (online ? "모든 기기 동기화" : "오프라인 · 연결되면 자동 저장") : mode === "signin" ? "로그인 필요" : mode === "noconfig" ? "설정 필요" : "불러오는 중";
   document.getElementById("tabs").hidden = mode !== "db";
 }
-let unsubs = [];
+let unsubs = [], LINKS = {};
 function listen(){
   unsubs.forEach(u => u()); unsubs = [];
   for (const coll of Object.keys(S)) {
@@ -290,6 +290,10 @@ function listen(){
       const m = {}; snap.docs.forEach(d => { m[d.id] = d.data(); }); S[coll] = m; render();
     }, () => toast("동기화가 잠시 끊겼어요.")));
   }
+  // 학부모 알림 링크는 users/ 밖(links/)에 있어서 따로 받아요.
+  unsubs.push(fs.collection("links").where("uid", "==", me.uid).onSnapshot(snap => {
+    LINKS = {}; snap.docs.forEach(d => { LINKS[d.id] = d.data(); }); render();
+  }, () => {}));
 }
 async function boot(){
   const cfg = window.FIREBASE_CONFIG;
@@ -684,10 +688,11 @@ function viewHolidays(){
     const btn = b ? `<button class="btn ghost" data-act="toggleHol" data-date="${d}">${off ? "수업함으로" : "쉬는 날로"}</button>` : `<button class="btn ghost danger" data-act="delHol" data-date="${d}">삭제</button>`;
     return `<div class="hrow${off ? "" : " off-no"}"><span class="d wd-${dow(d)}">${mdw(d)}</span><span style="flex:1;min-width:0">${esc(name)} <span class="pill${off ? " hol" : ""}">${off ? kind : "수업함"}</span></span>${btn}</div>`;
   }).join("") + `</div></div>
-  <div class="sec"><h3>부모님 알림</h3><div class="hint">출석·하원을 누르면 보낼 문자가 준비돼요. {이름}, {시간}, {학원} 자리에 실제 내용이 들어가요. 부모님 연락처는 학생 정보에서 넣어요.</div>
+  <div class="sec"><h3>부모님 알림</h3><div class="hint">부모님이 알림 앱을 설치하셨으면 출석·하원 때 자동으로 푸시 알림이 가요(학생 정보 → 알림 앱 링크). 설치하지 않은 부모님께는 출석·하원을 누르면 보낼 문자가 준비돼요. {이름}, {시간}, {학원} 자리에 실제 내용이 들어가요. 부모님 연락처는 학생 정보에서 넣어요.</div>
     <label class="f">학원 이름<input class="in" id="cAcademy" value="${esc(cfg().academy)}" maxlength="30"></label>
     <label class="f">출석 문자<textarea class="in" id="cIn" rows="2" maxlength="200">${esc(cfg().inMsg)}</textarea></label>
     <label class="f">하원 문자<textarea class="in" id="cOut" rows="2" maxlength="200">${esc(cfg().outMsg)}</textarea></label>
+    <label class="row" style="font-size:14px"><input type="checkbox" id="cPush"${cfg().push !== false ? " checked" : ""}> 알림 앱을 설치한 부모님께 자동으로 푸시 알림 보내기</label>
     <label class="row" style="font-size:14px"><input type="checkbox" id="cNotify"${cfg().notify ? " checked" : ""}> 출석·하원 누르면 알림 보내기 창 띄우기</label>
     <div><button class="btn primary" data-act="saveCfg">알림 설정 저장</button></div></div>
   <div class="sec"><h3>백업</h3><div class="hint">출석부 전체를 파일로 저장하거나, 저장해 둔 파일(또는 예전 출석부에서 옮겨 온 파일)을 불러올 수 있어요. 불러오면 같은 학생·기록은 파일 내용으로 바뀌고, 나머지는 그대로 남아요.</div>
@@ -781,6 +786,7 @@ function studentForm(sid, g0){
     <label class="f">한 회차 수업 횟수<input class="in" type="number" id="fCount" min="0" max="60" value="${Number(s.count)||0}" inputmode="numeric"></label></div>
     <div class="hint">횟수를 0으로 두면 끝 없이 매주 반복돼요. 공휴일·학원 휴일·빠진 수업은 회차에서 빠지고 뒤로 밀려요.</div>
     <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">부모님 연락처 (출석·하원 알림 받을 사람)<div id="parents" style="display:grid;gap:6px">${parentsHTML(s.parents||[])}</div><div><button class="btn" data-addp>＋ 연락처 추가</button></div></div>
+    ${sid ? linkHTML(sid) : ""}
     <label class="f">메모<textarea class="in" id="fMemo" rows="2" maxlength="300">${esc(s.memo||"")}</textarea></label>
     ${sid ? `<label class="row" style="font-size:14px"><input type="checkbox" id="fActive"${s.active===false?" checked":""}> 잠시 쉬는 중 (출석·달력에서 숨김)</label>` : ""}
     <div class="row"><button class="btn primary" data-save>저장</button>${sid ? `<span class="spacer"></span><button class="btn danger" data-del>학생 삭제</button>` : ""}</div><div id="delZone"></div>`;
@@ -796,6 +802,7 @@ function studentForm(sid, g0){
       else if (t.hasAttribute("data-addslot")) { readSlots(); slots.push({d:slots.length ? (slots[slots.length-1].d % 6) + 1 : 1, t: slots.length ? slots[slots.length-1].t : "16:00"}); el.querySelector("#slots").innerHTML = slotsHTML(slots); }
       else if (t.hasAttribute("data-addp")) { readParents(); parents.push({rel:parents.length ? "" : "엄마", tel:""}); el.querySelector("#parents").innerHTML = parentsHTML(parents); el.querySelector(`[data-p-tel="${parents.length-1}"]`).focus(); }
       else if (t.dataset.prm != null) { readParents(); parents.splice(Number(t.dataset.prm),1); el.querySelector("#parents").innerHTML = parentsHTML(parents); }
+      else if (t.dataset.link) linkAction(t.dataset.link, sid, el);
       else if (t.dataset.rm != null) { readSlots(); slots.splice(Number(t.dataset.rm),1); el.querySelector("#slots").innerHTML = slotsHTML(slots); }
       else if (t.dataset.goto) { ui.date = t.dataset.goto; if (!isSplit()) ui.tab = "day"; closeSheet(); render(); }
       else if (t.hasAttribute("data-mk")) { closeSheet(); makeupSheet(today(), sid); }
@@ -813,13 +820,14 @@ function studentForm(sid, g0){
         const data = {...(sid ? S.students[sid] : {}), name, group, slots, start:el.querySelector("#fStart").value || today(),
           count:Math.max(0, Math.min(60, Number(el.querySelector("#fCount").value) || 0)), memo:el.querySelector("#fMemo").value.trim(), color:s.color ?? 0, parents:parents.filter(p => p.tel),
           active: el.querySelector("#fActive") ? !el.querySelector("#fActive").checked : true};
-        put("students", sid || uid(), data); toast("저장했어요."); closeSheet();
+        const id = sid || uid(); put("students", id, data); if (data.linkCode) syncLink(data.linkCode); toast("저장했어요."); closeSheet();
       }
       else if (t.hasAttribute("data-del")) {
         el.querySelector("#delZone").innerHTML = `<div class="confirm">${esc(s.name)} 학생과 출석 기록, 보강 일정을 모두 지울까요? 되돌릴 수 없어요.<div class="row"><button class="btn danger" data-delok>모두 삭제</button><button class="btn" data-delno>취소</button></div></div>`;
       }
       else if (t.hasAttribute("data-delno")) el.querySelector("#delZone").innerHTML = "";
       else if (t.hasAttribute("data-delok")) {
+        if (s.linkCode) unlink(sid);
         Object.entries(S.events).filter(([,e]) => e.sid === sid).forEach(([id]) => del("events", id));
         Object.entries(S.att).filter(([,a]) => a.sid === sid).forEach(([id]) => del("att", id));
         del("students", sid); toast("삭제했어요."); closeSheet();
@@ -962,7 +970,7 @@ document.getElementById("app").addEventListener("click", e => {
   }
   else if (a === "saveCfg") {
     put("cfg", "main", {...cfg(), academy:document.getElementById("cAcademy").value.trim(), inMsg:document.getElementById("cIn").value.trim() || CFG0.inMsg,
-      outMsg:document.getElementById("cOut").value.trim() || CFG0.outMsg, notify:document.getElementById("cNotify").checked});
+      outMsg:document.getElementById("cOut").value.trim() || CFG0.outMsg, notify:document.getElementById("cNotify").checked, push:document.getElementById("cPush").checked});
     toast("알림 설정을 저장했어요.");
   }
   else if (a === "addHol") {
@@ -979,6 +987,63 @@ document.getElementById("app").addEventListener("change", e => {
   if (e.target.id === "nTitle") { ui.noticeTitle = e.target.checked; drawNotice(); return; }
   if (e.target.id === "pickDay" && e.target.value) { ui.date = e.target.value; render(); } });
 
+// ---------- 학부모 알림 앱 링크: 링크를 연 부모님 휴대폰으로 푸시 알림이 가요 ----------
+const APP_BASE = new URL("./", location.href).href;
+const linkURL = code => `${APP_BASE}p/?c=${code}`;
+function newCode(){ const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", r = crypto.getRandomValues(new Uint8Array(22)); return [...r].map(x => a[x % a.length]).join(""); }
+function linkHTML(sid){
+  const s = S.students[sid], l = s.linkCode && LINKS[s.linkCode];
+  let h = `<div class="sec" style="margin:0"><h3 style="font-size:15px">부모님 알림 앱</h3>`;
+  if (l) {
+    const sib = (l.sids || []).filter(x => x !== sid).map(x => S.students[x]?.name).filter(Boolean);
+    h += `<div class="hint">${l.joined ? `<b style="color:var(--ok)">부모님 휴대폰 ${l.joined}대 연결됨</b>` : "아직 연결된 휴대폰이 없어요"}${sib.length ? ` · ${esc(sib.join(", "))}와 같은 링크` : ""}. 이 링크를 부모님께 보내 주세요. 링크를 열고 "알림 받기"를 누르면 출석·하원 때 자동으로 알림이 가요.</div>
+      <input class="in" readonly value="${esc(linkURL(s.linkCode))}" onclick="this.select()">
+      <div class="row"><button class="btn primary" data-link="sms">문자로 링크 보내기</button><button class="btn" data-link="share">카톡 등으로 보내기</button><button class="btn" data-link="copy">복사</button><span class="spacer"></span><button class="btn ghost danger" data-link="off">링크 끊기</button></div>`;
+  } else {
+    const others = Object.entries(S.students).filter(([id,x]) => id !== sid && x.linkCode && LINKS[x.linkCode]);
+    h += `<div class="hint">부모님이 링크를 한 번 열어 "알림 받기"를 누르면, 출석·하원 때 문자 대신 무료 푸시 알림이 자동으로 가요.</div>
+      <div class="row"><button class="btn primary" data-link="new">알림 링크 만들기</button>${others.length ? `<select class="in" id="sibSel" style="width:auto"><option value="">형제·자매와 같은 링크 쓰기</option>${others.map(([id,x]) => `<option value="${id}">${esc(x.name)}${x.group ? " (" + esc(x.group) + ")" : ""}</option>`).join("")}</select><button class="btn" data-link="sib">연결</button>` : ""}</div>`;
+  }
+  return h + `</div>`;
+}
+function syncLink(code){
+  const l = LINKS[code]; if (!l || !fs || !me) return;
+  const sids = (l.sids || []).filter(x => S.students[x]?.linkCode === code);
+  fs.collection("links").doc(code).update({sids, names: sids.map(x => S.students[x].name), academy: cfg().academy}).catch(() => {});
+}
+function unlink(sid){
+  const s = S.students[sid], code = s?.linkCode, l = code && LINKS[code];
+  if (l && (l.sids || []).filter(x => x !== sid).length) fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayRemove(sid), names: firebase.firestore.FieldValue.arrayRemove(s.name)}).catch(putErr);
+  else if (code) {
+    const r = fs.collection("links").doc(code);
+    r.collection("devices").get().then(q => Promise.all(q.docs.map(d => d.ref.delete()))).catch(() => {}).finally(() => r.delete().catch(() => {}));
+  }
+  if (s) put("students", sid, {...s, linkCode: null});
+}
+async function linkAction(act, sid, el){
+  const s = S.students[sid];
+  if (act === "new") {
+    const code = newCode();
+    try { await fs.collection("links").doc(code).set({uid: me.uid, sids: [sid], names: [s.name], academy: cfg().academy, joined: 0, at: new Date().toISOString()}); }
+    catch(e){ return toast(e?.code === "permission-denied" ? "링크를 만들 권한이 없어요. Firebase 보안 규칙을 새로 올려야 해요." : "링크를 만들지 못했어요. 인터넷 연결을 확인해 주세요."); }
+    LINKS[code] = {uid: me.uid, sids: [sid], names: [s.name], joined: 0};
+    put("students", sid, {...s, linkCode: code});
+  } else if (act === "sib") {
+    const other = el.querySelector("#sibSel")?.value; if (!other) return toast("같은 링크를 쓸 학생을 골라 주세요.");
+    const code = S.students[other].linkCode;
+    await fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayUnion(sid), names: firebase.firestore.FieldValue.arrayUnion(s.name)}).catch(putErr);
+    put("students", sid, {...s, linkCode: code});
+  } else if (act === "off") {
+    unlink(sid); toast("링크를 끊었어요. 부모님 휴대폰으로 더 이상 알림이 가지 않아요.");
+  } else {
+    const url = linkURL(s.linkCode), text = `${cfg().academy || "학원"} 출결 알림 링크예요. 열어서 "알림 받기"를 눌러 주세요. 아이폰은 홈 화면에 추가한 뒤 눌러 주세요.\n${url}`;
+    if (act === "sms") { const ps = (s.parents || []).filter(p => p.tel); location.href = smsHref(ps.map(p => p.tel), text); return; }
+    if (act === "share" && navigator.share) { try { await navigator.share({text}); } catch(e){} return; }
+    try { await navigator.clipboard.writeText(act === "copy" ? url : text); toast("복사했어요."); } catch(e){ toast("복사하지 못했어요. 링크 칸을 길게 눌러 복사해 주세요."); }
+    return;
+  }
+  closeSheet(); setTimeout(() => studentForm(sid), 50);
+}
 // ---------- 부모님 알림: 문자 앱이나 카톡으로 보낼 내용을 준비해요 ----------
 const CFG0 = {academy:"", inMsg:"[{학원}] {이름} 학생이 {시간}에 학원에 도착했어요.", outMsg:"[{학원}] {이름} 학생이 {시간}에 수업을 마치고 하원했어요.", notify:true};
 const cfg = () => ({...CFG0, ...(S.cfg.main || {})});
@@ -989,7 +1054,9 @@ function smsHref(tels, body){
 }
 function notifySheet(sid, kind, iso){
   const s = S.students[sid], c = cfg();
-  if (!s || !c.notify) return;
+  if (!s) return;
+  if (c.push !== false && s.linkCode && LINKS[s.linkCode]?.joined) return toast("부모님 앱으로 알림이 가요.");
+  if (!c.notify) return;
   const ps = (s.parents || []).filter(p => p.tel);
   if (!ps.length) return toast(`${s.name} 학생은 부모님 연락처가 없어요. 학생 정보에서 넣을 수 있어요.`);
   const fill = t => (c.academy ? t : t.replaceAll("[{학원}] ", "")).replaceAll("{이름}", s.name).replaceAll("{시간}", hm(iso)).replaceAll("{학원}", c.academy);

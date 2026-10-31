@@ -1,0 +1,13 @@
+{
+  "name": "출결 알림",
+  "short_name": "출결 알림",
+  "lang": "ko",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f5f1",
+  "theme_color": "#1f5d4c",
+  "icons": [
+    {"src": "../icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "../icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
