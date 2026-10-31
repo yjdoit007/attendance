@@ -495,7 +495,7 @@ function cardHTML(x){
 
 // ---- 달력 (month) ----
 function calSessions(from, to){
-  const match = (sid,s) => ui.filter === "all" || ui.filter === "s:"+sid || ui.filter === "g:"+(s.group||"");
+  const match = (sid,s) => ui.filter === "all" || ui.filter === "s:"+pidOf(sid) || ui.filter === "g:"+(s.group||"");
   const byDay = {};
   for (const [sid,s] of Object.entries(S.students)) {
     if (s.active === false || !match(sid,s)) continue;
@@ -516,7 +516,7 @@ function calFilters(){
   if (groups.length > 1 || Object.keys(S.students).length > 1) {
     h += `<div class="filters"><button class="chip" data-act="filter" data-f="all" aria-pressed="${ui.filter==="all"}">전체</button>`;
     h += groups.map(g => `<button class="chip" data-act="filter" data-f="g:${esc(g)}" aria-pressed="${ui.filter==="g:"+g}">${esc(g)}</button>`).join("");
-    h += Object.entries(S.students).filter(([,s]) => s.active !== false).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([id,s]) => `<button class="chip" data-act="filter" data-f="s:${id}" aria-pressed="${ui.filter==="s:"+id}">${esc(s.name)}</button>`).join("");
+    h += people().filter(p => p.s.active !== false).map(p => [p.pid, p.s]).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([id,s]) => `<button class="chip" data-act="filter" data-f="s:${id}" aria-pressed="${ui.filter==="s:"+id}">${esc(s.name)}</button>`).join("");
     h += `</div>`;
   }
   return h;
@@ -527,7 +527,7 @@ const NOTICE_COLORS = ["#f9d3ef", "#d3e9f8", "#b5f3c5"]; // 4회마다 바뀌는
 const MON_EN = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 function noticeTargets(){
   const groups = allGroups().filter(g => Object.values(S.students).some(s => s.group === g && s.active !== false)).map(g => ["g:"+g, g]);
-  const studs = Object.entries(S.students).filter(([,s]) => s.active !== false).sort((a,b) => a[1].name.localeCompare(b[1].name)).map(([id,s]) => ["s:"+id, s.name]);
+  const studs = people().filter(p => p.s.active !== false).sort((a,b) => a.s.name.localeCompare(b.s.name)).map(p => ["s:"+p.pid, p.s.name]);
   return [...groups, ...studs];
 }
 // Every session of one student from their 회차 시작일 up to `until`, numbered so each block of `count` gets one color.
@@ -542,7 +542,7 @@ function noticeData(){
   const [Y,M] = ui.month.split("-").map(Number);
   const first = `${Y}-${pad(M)}-01`, last = fmt(new Date(Y, M, 0, 12));
   const t = ui.noticeT || noticeTargets()[0]?.[0] || "";
-  const sids = t.startsWith("g:") ? Object.keys(S.students).filter(id => S.students[id].group === t.slice(2) && S.students[id].active !== false).sort((a,b) => S.students[a].name.localeCompare(S.students[b].name)) : t.startsWith("s:") && S.students[t.slice(2)] ? [t.slice(2)] : [];
+  const sids = t.startsWith("g:") ? Object.keys(S.students).filter(id => S.students[id].group === t.slice(2) && S.students[id].active !== false).sort((a,b) => S.students[a].name.localeCompare(S.students[b].name)) : t.startsWith("s:") ? personIds(t.slice(2)) : [];
   const days = {}; // date -> {color, off, label}
   sids.forEach((sid, i) => {
     const s = S.students[sid], cmap = cycleColorMap(sid, last);
@@ -606,7 +606,7 @@ function viewMakeups(){
   const t = today(), kf = ui.mkKind || "makeup";
   let h = `<div class="datebar"><h2>보강</h2><span class="spacer"></span>${modeToggle()}</div>` + calFilters();
   h += `<div class="filters">${[["makeup","보강만"],["all","보강 + 날짜 변경"]].map(([k,l]) => `<button class="chip" data-act="mkKind" data-k="${k}" aria-pressed="${kf===k}">${l}</button>`).join("")}</div>`;
-  const match = (sid,s) => ui.filter === "all" || ui.filter === "s:"+sid || ui.filter === "g:"+(s.group||"");
+  const match = (sid,s) => ui.filter === "all" || ui.filter === "s:"+pidOf(sid) || ui.filter === "g:"+(s.group||"");
   const rows = [];
   for (const [id,e] of Object.entries(S.events)) {
     const s = S.students[e.sid]; if (!s || !match(e.sid,s)) continue;
@@ -673,24 +673,102 @@ function viewMonth(){
 }
 
 // ---- 학생 ----
-function viewStudents(){
-  const ids = Object.keys(S.students);
-  let h = `<div class="datebar"><h2>학생</h2><span class="spacer"></span><button class="btn" data-act="groups">반 관리</button><button class="btn primary" data-act="newStudent">＋ 학생 추가</button></div>`;
-  if (!ids.length && !allGroups().length) return h + noStudents();
-  const groups = {};
-  allGroups().forEach(g => { groups[g] = []; });
-  ids.forEach(id => { const s = S.students[id]; (groups[s.group || "반 미정"] ||= []).push(id); });
-  const order = Object.keys(groups).sort((a,b) => (a === "반 미정") - (b === "반 미정") || a.localeCompare(b));
-  for (const g of order) {
-    h += `<div class="group">${esc(g)} · ${groups[g].length}명</div><div class="slist">`;
-    if (!groups[g].length) h += `<button class="srow" data-act="newStudent" data-g="${esc(g)}"><div class="who"><span>아직 학생이 없어요. 눌러서 이 반에 학생을 추가하세요.</span></div></button>`;
-    h += groups[g].sort((a,b) => S.students[a].name.localeCompare(S.students[b].name)).map(id => {
-      const s = S.students[id], c = cycleOf(id);
-      const prog = c ? `<div class="hint">${c.done}/${c.count}회 체크 · 마지막 수업 ${c.end ? mdw(c.end) : "-"}</div><div class="bar"><i style="width:${Math.min(100, c.done / c.count * 100)}%"></i></div>` : `<div class="hint">횟수 제한 없이 매주 반복</div>`;
-      return `<button class="srow" data-act="openStudent" data-sid="${id}"${s.active === false ? ' style="opacity:.55"' : ""}><span class="dot" style="background:${colorOf(s)};margin-top:7px"></span><div class="who"><b>${esc(s.name)}${s.active === false ? " (쉬는 중)" : ""}</b><span>${slotText(s)}</span>${prog}</div></button>`;
-    }).join("") + `</div>`;
+// 한 학생이 여러 반 수업을 들으면 반마다 기록이 따로 있고, 같은 pid로 묶여요. 이름·연락처·출석 번호·알림 링크는 함께 바뀌어요.
+const PERSON_KEYS = ["name","parents","pin","linkCode","memo","color","active"];
+const pick = (o, ks) => Object.fromEntries(ks.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
+const pidOf = id => S.students[id]?.pid || id;
+const personIds = pid => Object.keys(S.students).filter(id => pidOf(id) === pid).sort((a,b) => (a !== pid) - (b !== pid) || (S.students[a].group||"").localeCompare(S.students[b].group||""));
+function people(){
+  const m = {};
+  for (const id of Object.keys(S.students)) (m[pidOf(id)] ||= []).push(id);
+  return Object.entries(m).map(([pid, ids]) => ({pid, ids: personIds(pid).length ? personIds(pid) : ids, s: S.students[ids.find(x => x === pid) || ids[0]]}));
+}
+function putPerson(pid, fields){ personIds(pid).forEach(id => put("students", id, {...S.students[id], ...fields})); }
+// 이름이 같은데 따로 등록된 학생들 (예전에 반마다 따로 넣은 경우)
+function dupNames(){
+  const by = {};
+  people().forEach(p => (by[p.s.name] ||= []).push(p.pid));
+  return Object.entries(by).filter(([,v]) => v.length > 1);
+}
+function mergeDups(){
+  for (const [name, pids] of dupNames()) {
+    const ids = pids.flatMap(personIds), keep = pids[0];
+    const recs = ids.map(id => S.students[id]);
+    const parents = []; recs.forEach(r => (r.parents || []).forEach(p => { if (p.tel && !parents.some(q => lastFour(q.tel) === lastFour(p.tel) && q.tel.replace(/\D/g,"") === p.tel.replace(/\D/g,""))) parents.push(p); }));
+    const linkCode = recs.map(r => r.linkCode).find(Boolean) || null;
+    const fields = {pid: keep, name, parents, pin: recs.map(r => r.pin).find(Boolean) || "", linkCode, memo: [...new Set(recs.map(r => r.memo).filter(Boolean))].join("\n"), color: S.students[keep].color ?? 0, active: recs.some(r => r.active !== false)};
+    ids.forEach(id => put("students", id, {...S.students[id], ...fields}));
+    if (linkCode && LINKS[linkCode] && fs && me) fs.collection("links").doc(linkCode).update({sids: firebase.firestore.FieldValue.arrayUnion(...ids)}).then(() => syncLink(linkCode)).catch(() => {});
   }
+  toast("같은 이름 학생을 한 명으로 합쳤어요.");
+}
+function viewStudents(){
+  const all = people().sort((a,b) => a.s.name.localeCompare(b.s.name));
+  let h = `<div class="datebar"><h2>학생 ${all.length ? `<small>${all.length}명</small>` : ""}</h2><span class="spacer"></span><button class="btn" data-act="groups">반 관리</button><button class="btn primary" data-act="newStudent">＋ 학생 추가</button></div>`;
+  if (!all.length) return h + noStudents();
+  const dups = dupNames();
+  if (dups.length) h += `<div class="banner info" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:200px">이름이 같은 학생이 반마다 따로 등록돼 있어요: <b>${dups.map(([n]) => esc(n)).join(", ")}</b>. 같은 학생이면 한 명으로 합쳐 주세요. 반별 수업과 출석 기록은 그대로 남아요.</span><button class="btn primary" data-act="mergeDups">한 명으로 합치기</button></div>`;
+  h += `<div class="slist">` + all.map(({pid, ids, s}) => {
+    const off = ids.every(id => S.students[id].active === false);
+    const cls = ids.map(id => { const x = S.students[id], c = cycleOf(id);
+      return `<div class="hint">${esc(x.group || "반 없음")} · ${slotText(x)}${c ? ` · ${c.done}/${c.count}회` : ""}</div>`; }).join("");
+    const np = (s.parents || []).filter(p => p.tel).length, link = s.linkCode && LINKS[s.linkCode];
+    const tags = [np ? `<span class="pill">부모님 ${np}</span>` : "", link?.joined ? `<span class="pill ok">알림 앱</span>` : ""].join("");
+    return `<button class="srow" data-act="openStudent" data-sid="${pid}"${off ? ' style="opacity:.55"' : ""}><span class="dot" style="background:${colorOf(s)};margin-top:7px"></span><div class="who" style="flex:1;min-width:0"><b>${esc(s.name)}${off ? " (쉬는 중)" : ""}</b>${cls}</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${tags}</div></button>`;
+  }).join("") + `</div>`;
   return h;
+}
+
+// 학생 한 명: 이름·연락처·출석 번호·알림 링크, 그리고 듣는 반 수업 목록
+function personSheet(pid){
+  const ids = personIds(pid); if (!ids.length) return;
+  const s = S.students[ids[0]];
+  const parentsHTML = ps => ps.map((p,i) => `<div class="prow"><input class="in" data-p-rel="${i}" value="${esc(p.rel)}" placeholder="엄마" maxlength="10"><input class="in" type="tel" data-p-tel="${i}" value="${esc(p.tel)}" placeholder="010-1234-5678" inputmode="tel" maxlength="20"><button class="btn icon" data-prm="${i}" aria-label="삭제">×</button></div>`).join("");
+  let h = `<div class="row"><h3>${esc(s.name)}</h3><span class="spacer"></span><button class="btn ghost" data-close>닫기</button></div>
+    <div class="sec" style="margin:0"><h3 style="font-size:15px">듣는 수업</h3>` + ids.map(id => {
+      const x = S.students[id], c = cycleOf(id);
+      return `<button class="srow" data-cls="${id}"><div class="who" style="flex:1;min-width:0"><b style="font-size:15px">${esc(x.group || "반 없음")}</b><span>${slotText(x)}</span>${c ? `<div class="hint">${c.done}/${c.count}회 체크 · 마지막 수업 ${c.end ? mdw(c.end) : "-"}</div><div class="bar"><i style="width:${Math.min(100, c.done / c.count * 100)}%"></i></div>` : `<div class="hint">횟수 제한 없이 매주 반복</div>`}</div><span class="hint">일정 ›</span></button>`;
+    }).join("") + `<div><button class="btn" data-addcls>＋ 다른 반 수업 추가</button></div></div>
+    <label class="f">이름<input class="in" id="fName" value="${esc(s.name)}" maxlength="30"></label>
+    <label class="f">학생 출석 번호 (4자리)<input class="in" id="fPin" value="${esc(s.pin||"")}" placeholder="${s.parents?.[0]?.tel ? "비우면 부모님 번호 뒤 4자리(" + esc(lastFour(s.parents[0].tel)) + ")" : "예: 1234"}" inputmode="numeric" maxlength="4"></label>
+    <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">부모님 연락처 (출석·하원 알림 받을 사람)<div id="parents" style="display:grid;gap:6px">${parentsHTML(s.parents||[])}</div><div><button class="btn" data-addp>＋ 연락처 추가</button></div></div>
+    ${linkHTML(ids[0])}
+    <label class="f">메모<textarea class="in" id="fMemo" rows="2" maxlength="300">${esc(s.memo||"")}</textarea></label>
+    <label class="row" style="font-size:14px"><input type="checkbox" id="fActive"${s.active===false?" checked":""}> 잠시 쉬는 중 (출석·달력에서 숨김)</label>
+    <div class="row"><button class="btn primary" data-save>저장</button><span class="spacer"></span><button class="btn danger" data-del>학생 삭제</button></div><div id="delZone"></div>`;
+  openSheet(h, el => {
+    let parents = (s.parents||[]).map(x => ({...x}));
+    const readParents = () => { parents = parents.map((x,i) => ({rel:el.querySelector(`[data-p-rel="${i}"]`).value.trim(), tel:el.querySelector(`[data-p-tel="${i}"]`).value.trim()})); };
+    el.addEventListener("click", ev => {
+      const t = ev.target.closest("button"); if (!t) return;
+      if (t.hasAttribute("data-close")) closeSheet();
+      else if (t.dataset.cls) { closeSheet(); studentForm(t.dataset.cls); }
+      else if (t.hasAttribute("data-addcls")) { closeSheet(); studentForm(null, "", pid); }
+      else if (t.hasAttribute("data-addp")) { readParents(); parents.push({rel:parents.length ? "" : "엄마", tel:""}); el.querySelector("#parents").innerHTML = parentsHTML(parents); el.querySelector(`[data-p-tel="${parents.length-1}"]`).focus(); }
+      else if (t.dataset.prm != null) { readParents(); parents.splice(Number(t.dataset.prm),1); el.querySelector("#parents").innerHTML = parentsHTML(parents); }
+      else if (t.dataset.link) linkAction(t.dataset.link, ids[0], el);
+      else if (t.hasAttribute("data-save")) {
+        readParents();
+        const name = el.querySelector("#fName").value.trim(), pin = el.querySelector("#fPin").value.replace(/\D/g, "");
+        if (!name) { el.querySelector("#fName").focus(); return toast("이름을 입력해 주세요."); }
+        if (pin && pin.length !== 4) { el.querySelector("#fPin").focus(); return toast("출석 번호는 숫자 4자리로 넣어 주세요."); }
+        putPerson(pid, {name, pin, parents: parents.filter(p => p.tel), memo: el.querySelector("#fMemo").value.trim(), active: !el.querySelector("#fActive").checked});
+        if (s.linkCode) syncLink(s.linkCode);
+        toast("저장했어요."); closeSheet();
+      }
+      else if (t.hasAttribute("data-del")) el.querySelector("#delZone").innerHTML = `<div class="confirm">${esc(s.name)} 학생의 모든 반 수업과 출석 기록, 보강 일정을 지울까요? 되돌릴 수 없어요.<div class="row"><button class="btn danger" data-delok>모두 삭제</button><button class="btn" data-delno>취소</button></div></div>`;
+      else if (t.hasAttribute("data-delno")) el.querySelector("#delZone").innerHTML = "";
+      else if (t.hasAttribute("data-delok")) {
+        if (s.linkCode) unlink(ids[0], true);
+        for (const sid of ids) {
+          Object.entries(S.events).filter(([,e]) => e.sid === sid).forEach(([id]) => del("events", id));
+          Object.entries(S.att).filter(([,a]) => a.sid === sid).forEach(([id]) => del("att", id));
+          del("students", sid);
+        }
+        toast("삭제했어요."); closeSheet();
+      }
+    });
+  });
 }
 
 // ---- 휴일 ----
@@ -787,12 +865,16 @@ function groupSheet(){
   });
 }
 
-function studentForm(sid, g0){
-  const s = sid ? S.students[sid] : {name:"",group:g0||"",slots:[{d:1,t:"16:00"}],start:today(),count:8,color:Object.keys(S.students).length%8,memo:"",parents:[]};
+// mode "class": 한 학생의 반 하나(수업 일정·회차)만 고쳐요. addPid: 그 학생에게 다른 반 수업을 더해요.
+function studentForm(sid, g0, addPid){
+  const base = addPid ? S.students[personIds(addPid)[0]] : null;
+  const cls = !!(sid || base);
+  const s = sid ? S.students[sid] : base ? {...pick(base, PERSON_KEYS), pid:addPid, group:g0||"", slots:[{d:1,t:base.slots?.[0]?.t || "16:00"}], start:today(), count:Number(base.count)||4} : {name:"",group:g0||"",slots:[{d:1,t:"16:00"}],start:today(),count:8,color:Object.keys(S.students).length%8,memo:"",parents:[]};
+  const pid = sid ? pidOf(sid) : addPid, many = pid ? personIds(pid).length > 1 : false;
   const parentsHTML = ps => ps.map((p,i) => `<div class="prow"><input class="in" data-p-rel="${i}" value="${esc(p.rel)}" placeholder="엄마" maxlength="10"><input class="in" type="tel" data-p-tel="${i}" value="${esc(p.tel)}" placeholder="010-1234-5678" inputmode="tel" maxlength="20"><button class="btn icon" data-prm="${i}" aria-label="삭제">×</button></div>`).join("");
   const c = sid ? cycleOf(sid) : null;
   const slotsHTML = sl => sl.map((x,i) => `<div class="slot"><select class="in" data-slot-d="${i}">${WD.map((w,j)=>`<option value="${j}"${Number(x.d)===j?" selected":""}>${w}요일</option>`).join("")}</select><input class="in" type="time" data-slot-t="${i}" value="${x.t}" step="300"><button class="btn icon" data-rm="${i}" aria-label="삭제">×</button></div>`).join("");
-  let h = `<div class="row"><h3>${sid ? esc(s.name) : "학생 추가"}</h3><span class="spacer"></span><button class="btn ghost" data-close>닫기</button></div>`;
+  let h = `<div class="row">${cls ? `<button class="btn ghost" data-back>‹ ${esc(s.name)}</button>` : ""}<h3>${sid ? (s.group ? esc(s.group) : "수업") : base ? "다른 반 수업 추가" : "학생 추가"}</h3><span class="spacer"></span><button class="btn ghost" data-close>닫기</button></div>`;
   if (c) {
     h += `<div class="sec" style="margin:0"><div class="row"><h3 style="font-size:15px">이번 회차 ${c.count}회 일정</h3><span class="spacer"></span><span class="pill ok">${c.done}회 체크</span></div><div class="sched">`;
     h += c.list.map(x => {
@@ -804,19 +886,17 @@ function studentForm(sid, g0){
     if (c.real.length < c.count) h += `<div class="hint">요일을 넣으면 나머지 회차가 채워져요.</div>`;
     h += `</div><div class="row"><button class="btn" data-mk>＋ 보강 추가</button>${c.end ? `<button class="btn" data-next>다음 ${c.count}회 시작 (${mdw(addDays(c.end,1))}부터)</button>` : ""}</div></div>`;
   }
-  h += `<label class="f">이름<input class="in" id="fName" value="${esc(s.name)}" placeholder="예: 김민지" maxlength="30"></label>
-    <label class="f">학생 출석 번호 (4자리)<input class="in" id="fPin" value="${esc(s.pin||"")}" placeholder="${s.parents?.[0]?.tel ? "비우면 부모님 번호 뒤 4자리(" + esc(lastFour(s.parents[0].tel)) + ")" : "예: 1234"}" inputmode="numeric" maxlength="4" pattern="[0-9]*"></label>
+  h += `${cls ? "" : `<label class="f">이름<input class="in" id="fName" value="${esc(s.name)}" placeholder="예: 김민지" maxlength="30"></label>
+    <label class="f">학생 출석 번호 (4자리)<input class="in" id="fPin" value="${esc(s.pin||"")}" placeholder="${s.parents?.[0]?.tel ? "비우면 부모님 번호 뒤 4자리(" + esc(lastFour(s.parents[0].tel)) + ")" : "예: 1234"}" inputmode="numeric" maxlength="4" pattern="[0-9]*"></label>`}
     <label class="f">반<select class="in" id="fGroup"><option value="">반 없음</option>${allGroups().map(g => `<option value="${esc(g)}"${g === s.group ? " selected" : ""}>${esc(g)}</option>`).join("")}<option value="__new">＋ 새 반 만들기</option></select></label>
     <label class="f" id="fNewWrap" hidden>새 반 이름<input class="in" id="fNewGroup" placeholder="예: 초등 3반" maxlength="30"></label>
     <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">매주 수업 요일·시간<div id="slots" style="display:grid;gap:6px">${slotsHTML(s.slots||[])}</div><div><button class="btn" data-addslot>＋ 요일 추가</button></div></div>
     <div class="two"><label class="f">회차 시작일<input class="in" type="date" id="fStart" value="${s.start||today()}"></label>
     <label class="f">한 회차 수업 횟수<input class="in" type="number" id="fCount" min="0" max="60" value="${Number(s.count)||0}" inputmode="numeric"></label></div>
     <div class="hint">횟수를 0으로 두면 끝 없이 매주 반복돼요. 공휴일·학원 휴일·빠진 수업은 회차에서 빠지고 뒤로 밀려요.</div>
-    <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">부모님 연락처 (출석·하원 알림 받을 사람)<div id="parents" style="display:grid;gap:6px">${parentsHTML(s.parents||[])}</div><div><button class="btn" data-addp>＋ 연락처 추가</button></div></div>
-    ${sid ? linkHTML(sid) : ""}
-    <label class="f">메모<textarea class="in" id="fMemo" rows="2" maxlength="300">${esc(s.memo||"")}</textarea></label>
-    ${sid ? `<label class="row" style="font-size:14px"><input type="checkbox" id="fActive"${s.active===false?" checked":""}> 잠시 쉬는 중 (출석·달력에서 숨김)</label>` : ""}
-    <div class="row"><button class="btn primary" data-save>저장</button>${sid ? `<span class="spacer"></span><button class="btn danger" data-del>학생 삭제</button>` : ""}</div><div id="delZone"></div>`;
+    ${cls ? "" : `<div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">부모님 연락처 (출석·하원 알림 받을 사람)<div id="parents" style="display:grid;gap:6px">${parentsHTML(s.parents||[])}</div><div><button class="btn" data-addp>＋ 연락처 추가</button></div></div>
+    <label class="f">메모<textarea class="in" id="fMemo" rows="2" maxlength="300">${esc(s.memo||"")}</textarea></label>`}
+    <div class="row"><button class="btn primary" data-save>저장</button>${sid ? `<span class="spacer"></span><button class="btn danger" data-del>${many ? "이 반 수업 빼기" : "학생 삭제"}</button>` : ""}</div><div id="delZone"></div>`;
   openSheet(h, el => {
     el.querySelector("#fGroup").addEventListener("change", e => { const nw = e.target.value === "__new"; el.querySelector("#fNewWrap").hidden = !nw; if (nw) el.querySelector("#fNewGroup").focus(); });
     let slots = (s.slots||[]).map(x => ({...x}));
@@ -830,14 +910,15 @@ function studentForm(sid, g0){
       else if (t.hasAttribute("data-addp")) { readParents(); parents.push({rel:parents.length ? "" : "엄마", tel:""}); el.querySelector("#parents").innerHTML = parentsHTML(parents); el.querySelector(`[data-p-tel="${parents.length-1}"]`).focus(); }
       else if (t.dataset.prm != null) { readParents(); parents.splice(Number(t.dataset.prm),1); el.querySelector("#parents").innerHTML = parentsHTML(parents); }
       else if (t.dataset.link) linkAction(t.dataset.link, sid, el);
+      else if (t.hasAttribute("data-back")) { closeSheet(); personSheet(pid); }
       else if (t.dataset.rm != null) { readSlots(); slots.splice(Number(t.dataset.rm),1); el.querySelector("#slots").innerHTML = slotsHTML(slots); }
       else if (t.dataset.goto) { ui.date = t.dataset.goto; if (!isSplit()) ui.tab = "day"; closeSheet(); render(); }
       else if (t.hasAttribute("data-mk")) { closeSheet(); makeupSheet(today(), sid); }
       else if (t.hasAttribute("data-next")) { put("students", sid, {...S.students[sid], start:addDays(c.end,1)}); toast("다음 회차를 시작했어요."); closeSheet(); }
       else if (t.hasAttribute("data-save")) {
-        readSlots(); readParents();
-        const name = el.querySelector("#fName").value.trim();
-        const pin = el.querySelector("#fPin").value.replace(/\D/g, "");
+        readSlots(); if (!cls) readParents();
+        const name = cls ? s.name : el.querySelector("#fName").value.trim();
+        const pin = cls ? (s.pin || "") : el.querySelector("#fPin").value.replace(/\D/g, "");
         if (pin && pin.length !== 4) { el.querySelector("#fPin").focus(); toast("출석 번호는 숫자 4자리로 넣어 주세요."); return; }
         if (!name) { el.querySelector("#fName").focus(); toast("이름을 입력해 주세요."); return; }
         let group = el.querySelector("#fGroup").value;
@@ -846,20 +927,24 @@ function studentForm(sid, g0){
           if (!group) { el.querySelector("#fNewGroup").focus(); toast("새 반 이름을 입력해 주세요."); return; }
           if (!groupId(group)) put("groups", uid(), {name:group});
         }
-        const data = {...(sid ? S.students[sid] : {}), name, group, slots, start:el.querySelector("#fStart").value || today(),
-          count:Math.max(0, Math.min(60, Number(el.querySelector("#fCount").value) || 0)), memo:el.querySelector("#fMemo").value.trim(), color:s.color ?? 0, parents:parents.filter(p => p.tel), pin,
-          active: el.querySelector("#fActive") ? !el.querySelector("#fActive").checked : true};
+        const data = {...s, name, group, slots, start:el.querySelector("#fStart").value || today(),
+          count:Math.max(0, Math.min(60, Number(el.querySelector("#fCount").value) || 0)), pin,
+          ...(cls ? {} : {memo:el.querySelector("#fMemo").value.trim(), parents:parents.filter(p => p.tel), active:true})};
         const id = sid || uid(); put("students", id, data); if (data.linkCode) syncLink(data.linkCode); toast("저장했어요."); closeSheet();
+        if (cls) personSheet(pidOf(id));
       }
       else if (t.hasAttribute("data-del")) {
-        el.querySelector("#delZone").innerHTML = `<div class="confirm">${esc(s.name)} 학생과 출석 기록, 보강 일정을 모두 지울까요? 되돌릴 수 없어요.<div class="row"><button class="btn danger" data-delok>모두 삭제</button><button class="btn" data-delno>취소</button></div></div>`;
+        el.querySelector("#delZone").innerHTML = `<div class="confirm">${many ? `${esc(s.name)} 학생의 ${esc(s.group || "이")} 수업과 그 출석 기록, 보강 일정을 지울까요? 다른 반 수업은 그대로 남아요.` : `${esc(s.name)} 학생과 출석 기록, 보강 일정을 모두 지울까요?`} 되돌릴 수 없어요.<div class="row"><button class="btn danger" data-delok>모두 삭제</button><button class="btn" data-delno>취소</button></div></div>`;
       }
       else if (t.hasAttribute("data-delno")) el.querySelector("#delZone").innerHTML = "";
       else if (t.hasAttribute("data-delok")) {
-        if (s.linkCode) unlink(sid);
+        if (s.linkCode && !many) unlink(sid);
+        else if (s.linkCode) fs.collection("links").doc(s.linkCode).update({sids: firebase.firestore.FieldValue.arrayRemove(sid)}).catch(() => {});
+        const rest = personIds(pid).filter(x => x !== sid), nextPid = pid === sid ? rest[0] : pid;
+        if (many && pid === sid) rest.forEach(x => put("students", x, {...S.students[x], pid: nextPid})); // 대표 기록이 빠지면 남은 수업으로 옮겨요.
         Object.entries(S.events).filter(([,e]) => e.sid === sid).forEach(([id]) => del("events", id));
         Object.entries(S.att).filter(([,a]) => a.sid === sid).forEach(([id]) => del("att", id));
-        del("students", sid); toast("삭제했어요."); closeSheet();
+        del("students", sid); toast("삭제했어요."); closeSheet(); if (many) personSheet(nextPid);
       }
     });
   });
@@ -977,7 +1062,8 @@ document.getElementById("app").addEventListener("click", e => {
   }
   else if (a === "newStudent") studentForm(null, b.dataset.g && b.dataset.g !== "반 미정" ? b.dataset.g : "");
   else if (a === "groups") groupSheet();
-  else if (a === "openStudent") studentForm(b.dataset.sid);
+  else if (a === "openStudent") personSheet(pidOf(b.dataset.sid));
+  else if (a === "mergeDups") mergeDups();
   else if (a === "makeup") makeupSheet(b.dataset.date);
   else if (a === "change") changeSheet(b.dataset.sid, b.dataset.date, b.dataset.time, b.dataset.kind, b.dataset.ev);
   else if (a === "undoEv") { del("events", b.dataset.id); toast("되돌렸어요."); }
@@ -1034,8 +1120,8 @@ function kioskMatches(pin){
   const t = today(), now = new Date(), nowHM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const rows = sessionsOnDay(t).filter(x => !x.skip && pinOf(x.s) === pin);
   const byName = {};
-  for (const x of rows) (byName[x.s.name] ||= []).push(x);
-  return Object.entries(byName).map(([name, list]) => {
+  for (const x of rows) (byName[pidOf(x.sid)] ||= []).push(x);
+  return Object.values(byName).map(list => { const name = list[0].s.name;
     const att = x => S.att[attKey(x.sid, x.date, x.time)];
     const near = (a, b) => Math.abs(hmMin(a.time) - hmMin(nowHM)) - Math.abs(hmMin(b.time) - hmMin(nowHM));
     const inS = list.filter(x => !att(x) || att(x).status === "absent").sort(near)[0];
@@ -1115,15 +1201,15 @@ const APP_BASE = new URL("./", location.href).href;
 const linkURL = code => `${APP_BASE}p/?c=${code}`;
 function newCode(){ const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", r = crypto.getRandomValues(new Uint8Array(22)); return [...r].map(x => a[x % a.length]).join(""); }
 function linkHTML(sid){
-  const s = S.students[sid], l = s.linkCode && LINKS[s.linkCode];
+  const s = S.students[sid], l = s.linkCode && LINKS[s.linkCode], mine = personIds(pidOf(sid));
   let h = `<div class="sec" style="margin:0"><h3 style="font-size:15px">부모님 알림 앱</h3>`;
   if (l) {
-    const sib = (l.sids || []).filter(x => x !== sid).map(x => S.students[x]?.name).filter(Boolean);
+    const sib = [...new Set((l.sids || []).filter(x => !mine.includes(x)).map(x => S.students[x]?.name).filter(Boolean))];
     h += `<div class="hint">${l.joined ? `<b style="color:var(--ok)">부모님 휴대폰 ${l.joined}대 연결됨</b>` : "아직 연결된 휴대폰이 없어요"}${sib.length ? ` · ${esc(sib.join(", "))}와 같은 링크` : ""}. 이 링크를 부모님께 보내 주세요. 링크를 열고 "알림 받기"를 누르면 출석·하원 때 자동으로 알림이 가요.</div>
       <input class="in" readonly value="${esc(linkURL(s.linkCode))}" onclick="this.select()">
       <div class="row"><button class="btn primary" data-link="sms">문자로 링크 보내기</button><button class="btn" data-link="share">카톡 등으로 보내기</button><button class="btn" data-link="copy">복사</button><span class="spacer"></span><button class="btn ghost danger" data-link="off">링크 끊기</button></div>`;
   } else {
-    const others = Object.entries(S.students).filter(([id,x]) => id !== sid && x.linkCode && LINKS[x.linkCode]);
+    const others = people().filter(p => p.pid !== pidOf(sid) && p.s.linkCode && LINKS[p.s.linkCode]).map(p => [p.ids[0], p.s]);
     h += `<div class="hint">부모님이 링크를 한 번 열어 "알림 받기"를 누르면, 출석·하원 때 문자 대신 무료 푸시 알림이 자동으로 가요.</div>
       <div class="row"><button class="btn primary" data-link="new">알림 링크 만들기</button>${others.length ? `<select class="in" id="sibSel" style="width:auto"><option value="">형제·자매와 같은 링크 쓰기</option>${others.map(([id,x]) => `<option value="${id}">${esc(x.name)}${x.group ? " (" + esc(x.group) + ")" : ""}</option>`).join("")}</select><button class="btn" data-link="sib">연결</button>` : ""}</div>`;
   }
@@ -1131,31 +1217,32 @@ function linkHTML(sid){
 }
 function syncLink(code){
   const l = LINKS[code]; if (!l || !fs || !me) return;
-  const sids = (l.sids || []).filter(x => S.students[x]?.linkCode === code);
-  fs.collection("links").doc(code).update({sids, names: sids.map(x => S.students[x].name), academy: cfg().academy}).catch(() => {});
+  const sids = Object.keys(S.students).filter(x => S.students[x].linkCode === code);
+  fs.collection("links").doc(code).update({sids, names: [...new Set(sids.map(x => S.students[x].name))], academy: cfg().academy}).catch(() => {});
 }
 function unlink(sid){
-  const s = S.students[sid], code = s?.linkCode, l = code && LINKS[code];
-  if (l && (l.sids || []).filter(x => x !== sid).length) fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayRemove(sid), names: firebase.firestore.FieldValue.arrayRemove(s.name)}).catch(putErr);
+  const s = S.students[sid], code = s?.linkCode, l = code && LINKS[code], mine = personIds(pidOf(sid));
+  if (l && (l.sids || []).filter(x => !mine.includes(x)).length) fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayRemove(...mine), names: firebase.firestore.FieldValue.arrayRemove(s.name)}).catch(putErr);
   else if (code) {
     const r = fs.collection("links").doc(code);
     r.collection("devices").get().then(q => Promise.all(q.docs.map(d => d.ref.delete()))).catch(() => {}).finally(() => r.delete().catch(() => {}));
   }
-  if (s) put("students", sid, {...s, linkCode: null});
+  if (s) putPerson(pidOf(sid), {linkCode: null});
 }
 async function linkAction(act, sid, el){
   const s = S.students[sid];
   if (act === "new") {
     const code = newCode();
-    try { await fs.collection("links").doc(code).set({uid: me.uid, sids: [sid], names: [s.name], academy: cfg().academy, joined: 0, at: new Date().toISOString()}); }
+    const mine = personIds(pidOf(sid));
+    try { await fs.collection("links").doc(code).set({uid: me.uid, sids: mine, names: [s.name], academy: cfg().academy, joined: 0, at: new Date().toISOString()}); }
     catch(e){ return toast(e?.code === "permission-denied" ? "링크를 만들 권한이 없어요. Firebase 보안 규칙을 새로 올려야 해요." : "링크를 만들지 못했어요. 인터넷 연결을 확인해 주세요."); }
-    LINKS[code] = {uid: me.uid, sids: [sid], names: [s.name], joined: 0};
-    put("students", sid, {...s, linkCode: code});
+    LINKS[code] = {uid: me.uid, sids: mine, names: [s.name], joined: 0};
+    putPerson(pidOf(sid), {linkCode: code});
   } else if (act === "sib") {
     const other = el.querySelector("#sibSel")?.value; if (!other) return toast("같은 링크를 쓸 학생을 골라 주세요.");
     const code = S.students[other].linkCode;
-    await fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayUnion(sid), names: firebase.firestore.FieldValue.arrayUnion(s.name)}).catch(putErr);
-    put("students", sid, {...s, linkCode: code});
+    await fs.collection("links").doc(code).update({sids: firebase.firestore.FieldValue.arrayUnion(...personIds(pidOf(sid))), names: firebase.firestore.FieldValue.arrayUnion(s.name)}).catch(putErr);
+    putPerson(pidOf(sid), {linkCode: code});
   } else if (act === "off") {
     unlink(sid); toast("링크를 끊었어요. 부모님 휴대폰으로 더 이상 알림이 가지 않아요.");
   } else {
@@ -1165,7 +1252,7 @@ async function linkAction(act, sid, el){
     try { await navigator.clipboard.writeText(act === "copy" ? url : text); toast("복사했어요."); } catch(e){ toast("복사하지 못했어요. 링크 칸을 길게 눌러 복사해 주세요."); }
     return;
   }
-  closeSheet(); setTimeout(() => studentForm(sid), 50);
+  closeSheet(); setTimeout(() => personSheet(pidOf(sid)), 50);
 }
 // ---------- 부모님 알림: 문자 앱이나 카톡으로 보낼 내용을 준비해요 ----------
 const CFG0 = {academy:"", inMsg:"[{학원}] {이름} 학생이 {시간}에 학원에 도착했어요.", outMsg:"[{학원}] {이름} 학생이 {시간}에 수업을 마치고 하원했어요.", notify:true};
