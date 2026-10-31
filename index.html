@@ -96,6 +96,10 @@ h2{font-family:var(--f-display);font-weight:400;font-size:24px;margin:0;text-wra
 .seg button{border:1px solid var(--line);background:var(--bg);border-radius:10px;min-height:44px;font-weight:600;font-size:15px;color:var(--muted)}
 .seg button.on.ok{background:var(--ok);border-color:var(--ok);color:var(--paper)}
 .seg button.on.late{background:var(--late);border-color:var(--late);color:var(--paper)}
+.seg button.on.out{background:var(--sat);border-color:var(--sat);color:var(--paper)}
+.seg button small{display:block;font-size:11px;font-weight:500;line-height:1.1;opacity:.9}
+.pill.out{background:var(--accent-soft);color:var(--sat)}
+.prow{display:grid;grid-template-columns:minmax(0,90px) 1fr 40px;gap:8px;align-items:center}
 .seg button.on.no{background:var(--no);border-color:var(--no);color:var(--paper)}
 .empty{text-align:center;color:var(--muted);padding:32px 16px;background:var(--paper);border:1px dashed var(--line);border-radius:14px}
 .empty b{display:block;color:var(--ink);font-size:16px;margin-bottom:4px}
@@ -238,7 +242,9 @@ const BUILTIN = {
   "2027-12-25":"성탄절","2027-12-27":"대체공휴일(성탄절)"
 };
 const WD = ["일","월","화","수","목","금","토"];
-const STATUS = {present:["출석","ok"],late:["지각","late"],absent:["결석","no"]};
+const STATUS = {present:["출석","ok"],leave:["하원","out"],absent:["결석","no"],late:["지각","late"]}; // 지각은 예전 기록 표시용
+const MARKS = ["present","leave","absent"];
+const hm = iso => { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
 // ---------- date helpers (YYYY-MM-DD strings, local time) ----------
 const pad = n => String(n).padStart(2,"0");
@@ -254,7 +260,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7
 const attKey = (sid,date,time) => `${sid}_${date}_${String(time).replace(":","")}`;
 
 // ---------- store: shared db when available, this device otherwise ----------
-const S = { students:{}, events:{}, att:{}, hol:{}, groups:{} };
+const S = { students:{}, events:{}, att:{}, hol:{}, groups:{}, cfg:{} };
 // ---------- store: Firebase (Firestore) per signed-in teacher, works offline ----------
 let fs = null, auth = null, me = null, mode = "loading";
 const ref = coll => fs.collection("users").doc(me.uid).collection(coll);
@@ -426,9 +432,9 @@ function viewDay(){
   const d = ui.date, w = dow(d), hol = holidayName(d);
   const list = sessionsOnDay(d);
   const real = list.filter(x => !x.skip);
-  const cnt = {present:0,late:0,absent:0};
-  real.forEach(x => { const a = S.att[attKey(x.sid,x.date,x.time)]; if (a) cnt[a.status]++; });
-  const left = real.length - cnt.present - cnt.late - cnt.absent;
+  const cnt = {present:0,leave:0,absent:0};
+  real.forEach(x => { const a = S.att[attKey(x.sid,x.date,x.time)]; if (a) { cnt[a.status === "absent" ? "absent" : "present"]++; if (a.status === "leave") cnt.leave++; } });
+  const left = real.length - cnt.present - cnt.absent;
   let h = `<div class="datebar"><button class="btn icon" data-act="day" data-n="-1" aria-label="이전 날">‹</button>
     <h2 class="wd-${w}">${md(d)} ${WD[w]}요일${d === today() ? "<small>오늘</small>" : ""}</h2>
     <button class="btn icon" data-act="day" data-n="1" aria-label="다음 날">›</button><span class="spacer"></span>
@@ -436,7 +442,7 @@ function viewDay(){
     <input class="in" type="date" id="pickDay" value="${d}" style="width:auto;min-height:40px;font-size:14px"></div>`;
   if (hol) h += `<div class="banner hol">● ${esc(hol)} · 정규 수업은 쉬어요. 이 날 수업하려면 휴일 탭에서 바꿀 수 있어요.</div>`;
   if (!Object.keys(S.students).length) return h + noStudents();
-  if (real.length) h += `<div class="summary"><span class="pill">수업 ${real.length}</span><span class="pill ok">출석 ${cnt.present}</span><span class="pill late">지각 ${cnt.late}</span><span class="pill no">결석 ${cnt.absent}</span>${left ? `<span class="pill">미체크 ${left}</span>` : ""}</div>`;
+  if (real.length) h += `<div class="summary"><span class="pill">수업 ${real.length}</span><span class="pill ok">출석 ${cnt.present}</span><span class="pill out">하원 ${cnt.leave}</span><span class="pill no">결석 ${cnt.absent}</span>${left ? `<span class="pill">미체크 ${left}</span>` : ""}</div>`;
   if (!list.length) h += `<div class="empty"><b>이 날은 수업이 없어요</b>보강이 필요하면 아래 버튼으로 추가하세요.</div>`;
   h += `<div class="cards">` + list.map(cardHTML).join("") + `</div>`;
   h += `<div class="row" style="margin-top:14px"><button class="btn" data-act="makeup" data-date="${d}">＋ 이 날 보강 추가</button><button class="btn ghost" data-act="showMakeups">보강 모아보기</button></div>`;
@@ -454,7 +460,10 @@ function cardHTML(x){
   return `<div class="card"><div class="chead"><span class="time">${x.time}</span><span class="dot" style="background:${colorOf(x.s)}"></span>
     <div class="who"><b>${esc(x.s.name)}</b><span>${sub || "&nbsp;"}</span></div>${tag}
     <button class="btn ghost" data-act="change" data-sid="${x.sid}" data-date="${x.date}" data-time="${x.time}" data-kind="${x.kind}" data-ev="${x.ev?.id||""}">일정</button></div>
-    <div class="seg">${Object.entries(STATUS).map(([st,[lab,cls]]) => `<button class="${cls}${a?.status === st ? " on" : ""}" data-act="mark" data-k="${k}" data-sid="${x.sid}" data-date="${x.date}" data-time="${x.time}" data-st="${st}" aria-pressed="${a?.status === st}">${lab}</button>`).join("")}</div></div>`;
+    <div class="seg">${MARKS.map(st => { const [lab,cls] = STATUS[st];
+      const on = st === "present" ? ["present","late","leave"].includes(a?.status) : a?.status === st;
+      const tm = on && st === "present" ? hm(a.inAt || a.at) : on && st === "leave" ? hm(a.outAt) : "";
+      return `<button class="${cls}${on ? " on" : ""}" data-act="mark" data-k="${k}" data-sid="${x.sid}" data-date="${x.date}" data-time="${x.time}" data-st="${st}" aria-pressed="${on}">${lab}${tm ? `<small>${tm}</small>` : ""}</button>`; }).join("")}</div></div>`;
 }
 
 // ---- 달력 (month) ----
@@ -675,6 +684,12 @@ function viewHolidays(){
     const btn = b ? `<button class="btn ghost" data-act="toggleHol" data-date="${d}">${off ? "수업함으로" : "쉬는 날로"}</button>` : `<button class="btn ghost danger" data-act="delHol" data-date="${d}">삭제</button>`;
     return `<div class="hrow${off ? "" : " off-no"}"><span class="d wd-${dow(d)}">${mdw(d)}</span><span style="flex:1;min-width:0">${esc(name)} <span class="pill${off ? " hol" : ""}">${off ? kind : "수업함"}</span></span>${btn}</div>`;
   }).join("") + `</div></div>
+  <div class="sec"><h3>부모님 알림</h3><div class="hint">출석·하원을 누르면 보낼 문자가 준비돼요. {이름}, {시간}, {학원} 자리에 실제 내용이 들어가요. 부모님 연락처는 학생 정보에서 넣어요.</div>
+    <label class="f">학원 이름<input class="in" id="cAcademy" value="${esc(cfg().academy)}" maxlength="30"></label>
+    <label class="f">출석 문자<textarea class="in" id="cIn" rows="2" maxlength="200">${esc(cfg().inMsg)}</textarea></label>
+    <label class="f">하원 문자<textarea class="in" id="cOut" rows="2" maxlength="200">${esc(cfg().outMsg)}</textarea></label>
+    <label class="row" style="font-size:14px"><input type="checkbox" id="cNotify"${cfg().notify ? " checked" : ""}> 출석·하원 누르면 알림 보내기 창 띄우기</label>
+    <div><button class="btn primary" data-act="saveCfg">알림 설정 저장</button></div></div>
   <div class="sec"><h3>백업</h3><div class="hint">출석부 전체를 파일로 저장하거나, 저장해 둔 파일(또는 예전 출석부에서 옮겨 온 파일)을 불러올 수 있어요. 불러오면 같은 학생·기록은 파일 내용으로 바뀌고, 나머지는 그대로 남아요.</div>
     <div class="row"><button class="btn" data-act="exportBk">백업 파일 저장</button><button class="btn" data-act="importBk">백업 불러오기</button></div><div id="bkMsg"></div></div>
   <div class="sec"><h3>계정</h3><div class="hint">${esc(me?.email || "")} 계정으로 로그인했어요. 같은 계정으로 로그인한 기기끼리 출석부가 동기화돼요.</div><div><button class="btn" data-act="logout">로그아웃</button></div></div>
@@ -742,7 +757,8 @@ function groupSheet(){
 }
 
 function studentForm(sid, g0){
-  const s = sid ? S.students[sid] : {name:"",group:g0||"",slots:[{d:1,t:"16:00"}],start:today(),count:8,color:Object.keys(S.students).length%8,memo:""};
+  const s = sid ? S.students[sid] : {name:"",group:g0||"",slots:[{d:1,t:"16:00"}],start:today(),count:8,color:Object.keys(S.students).length%8,memo:"",parents:[]};
+  const parentsHTML = ps => ps.map((p,i) => `<div class="prow"><input class="in" data-p-rel="${i}" value="${esc(p.rel)}" placeholder="엄마" maxlength="10"><input class="in" type="tel" data-p-tel="${i}" value="${esc(p.tel)}" placeholder="010-1234-5678" inputmode="tel" maxlength="20"><button class="btn icon" data-prm="${i}" aria-label="삭제">×</button></div>`).join("");
   const c = sid ? cycleOf(sid) : null;
   const slotsHTML = sl => sl.map((x,i) => `<div class="slot"><select class="in" data-slot-d="${i}">${WD.map((w,j)=>`<option value="${j}"${Number(x.d)===j?" selected":""}>${w}요일</option>`).join("")}</select><input class="in" type="time" data-slot-t="${i}" value="${x.t}" step="300"><button class="btn icon" data-rm="${i}" aria-label="삭제">×</button></div>`).join("");
   let h = `<div class="row"><h3>${sid ? esc(s.name) : "학생 추가"}</h3><span class="spacer"></span><button class="btn ghost" data-close>닫기</button></div>`;
@@ -764,23 +780,28 @@ function studentForm(sid, g0){
     <div class="two"><label class="f">회차 시작일<input class="in" type="date" id="fStart" value="${s.start||today()}"></label>
     <label class="f">한 회차 수업 횟수<input class="in" type="number" id="fCount" min="0" max="60" value="${Number(s.count)||0}" inputmode="numeric"></label></div>
     <div class="hint">횟수를 0으로 두면 끝 없이 매주 반복돼요. 공휴일·학원 휴일·빠진 수업은 회차에서 빠지고 뒤로 밀려요.</div>
+    <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500">부모님 연락처 (출석·하원 알림 받을 사람)<div id="parents" style="display:grid;gap:6px">${parentsHTML(s.parents||[])}</div><div><button class="btn" data-addp>＋ 연락처 추가</button></div></div>
     <label class="f">메모<textarea class="in" id="fMemo" rows="2" maxlength="300">${esc(s.memo||"")}</textarea></label>
     ${sid ? `<label class="row" style="font-size:14px"><input type="checkbox" id="fActive"${s.active===false?" checked":""}> 잠시 쉬는 중 (출석·달력에서 숨김)</label>` : ""}
     <div class="row"><button class="btn primary" data-save>저장</button>${sid ? `<span class="spacer"></span><button class="btn danger" data-del>학생 삭제</button>` : ""}</div><div id="delZone"></div>`;
   openSheet(h, el => {
     el.querySelector("#fGroup").addEventListener("change", e => { const nw = e.target.value === "__new"; el.querySelector("#fNewWrap").hidden = !nw; if (nw) el.querySelector("#fNewGroup").focus(); });
     let slots = (s.slots||[]).map(x => ({...x}));
+    let parents = (s.parents||[]).map(x => ({...x}));
+    const readParents = () => { parents = parents.map((x,i) => ({rel:el.querySelector(`[data-p-rel="${i}"]`).value.trim(), tel:el.querySelector(`[data-p-tel="${i}"]`).value.trim()})); };
     const readSlots = () => { slots = slots.map((x,i) => ({d:Number(el.querySelector(`[data-slot-d="${i}"]`).value), t:el.querySelector(`[data-slot-t="${i}"]`).value || "16:00"})); };
     el.addEventListener("click", ev => {
       const t = ev.target.closest("button"); if (!t) return;
       if (t.hasAttribute("data-close")) closeSheet();
       else if (t.hasAttribute("data-addslot")) { readSlots(); slots.push({d:slots.length ? (slots[slots.length-1].d % 6) + 1 : 1, t: slots.length ? slots[slots.length-1].t : "16:00"}); el.querySelector("#slots").innerHTML = slotsHTML(slots); }
+      else if (t.hasAttribute("data-addp")) { readParents(); parents.push({rel:parents.length ? "" : "엄마", tel:""}); el.querySelector("#parents").innerHTML = parentsHTML(parents); el.querySelector(`[data-p-tel="${parents.length-1}"]`).focus(); }
+      else if (t.dataset.prm != null) { readParents(); parents.splice(Number(t.dataset.prm),1); el.querySelector("#parents").innerHTML = parentsHTML(parents); }
       else if (t.dataset.rm != null) { readSlots(); slots.splice(Number(t.dataset.rm),1); el.querySelector("#slots").innerHTML = slotsHTML(slots); }
       else if (t.dataset.goto) { ui.date = t.dataset.goto; if (!isSplit()) ui.tab = "day"; closeSheet(); render(); }
       else if (t.hasAttribute("data-mk")) { closeSheet(); makeupSheet(today(), sid); }
       else if (t.hasAttribute("data-next")) { put("students", sid, {...S.students[sid], start:addDays(c.end,1)}); toast("다음 회차를 시작했어요."); closeSheet(); }
       else if (t.hasAttribute("data-save")) {
-        readSlots();
+        readSlots(); readParents();
         const name = el.querySelector("#fName").value.trim();
         if (!name) { el.querySelector("#fName").focus(); toast("이름을 입력해 주세요."); return; }
         let group = el.querySelector("#fGroup").value;
@@ -790,7 +811,7 @@ function studentForm(sid, g0){
           if (!groupId(group)) put("groups", uid(), {name:group});
         }
         const data = {...(sid ? S.students[sid] : {}), name, group, slots, start:el.querySelector("#fStart").value || today(),
-          count:Math.max(0, Math.min(60, Number(el.querySelector("#fCount").value) || 0)), memo:el.querySelector("#fMemo").value.trim(), color:s.color ?? 0,
+          count:Math.max(0, Math.min(60, Number(el.querySelector("#fCount").value) || 0)), memo:el.querySelector("#fMemo").value.trim(), color:s.color ?? 0, parents:parents.filter(p => p.tel),
           active: el.querySelector("#fActive") ? !el.querySelector("#fActive").checked : true};
         put("students", sid || uid(), data); toast("저장했어요."); closeSheet();
       }
@@ -924,9 +945,25 @@ document.getElementById("app").addEventListener("click", e => {
   else if (a === "change") changeSheet(b.dataset.sid, b.dataset.date, b.dataset.time, b.dataset.kind, b.dataset.ev);
   else if (a === "undoEv") { del("events", b.dataset.id); toast("되돌렸어요."); }
   else if (a === "mark") {
-    const k = b.dataset.k, cur = S.att[k];
-    if (cur && cur.status === b.dataset.st) del("att", k);
-    else put("att", k, {sid:b.dataset.sid, date:b.dataset.date, time:b.dataset.time, status:b.dataset.st, at:new Date().toISOString()});
+    const k = b.dataset.k, cur = S.att[k], st = b.dataset.st, now = new Date().toISOString();
+    const base = {sid:b.dataset.sid, date:b.dataset.date, time:b.dataset.time};
+    const came = cur && cur.status !== "absent";
+    if (st === "present") {
+      if (came && cur.status !== "leave") return del("att", k);           // 출석 다시 누르면 취소
+      if (cur?.status === "leave") { const {outAt, ...rest} = cur; return put("att", k, {...rest, status:"present"}); }
+      put("att", k, {...base, status:"present", at:now, inAt:now}); notifySheet(base.sid, "in", now);
+    } else if (st === "leave") {
+      if (cur?.status === "leave") { const {outAt, ...rest} = cur; return put("att", k, {...rest, status:"present"}); } // 하원 취소
+      put("att", k, {...base, ...(came ? cur : {at:now, inAt:now}), status:"leave", outAt:now}); notifySheet(base.sid, "out", now);
+    } else {
+      if (cur?.status === "absent") return del("att", k);
+      put("att", k, {...base, status:"absent", at:now});
+    }
+  }
+  else if (a === "saveCfg") {
+    put("cfg", "main", {...cfg(), academy:document.getElementById("cAcademy").value.trim(), inMsg:document.getElementById("cIn").value.trim() || CFG0.inMsg,
+      outMsg:document.getElementById("cOut").value.trim() || CFG0.outMsg, notify:document.getElementById("cNotify").checked});
+    toast("알림 설정을 저장했어요.");
   }
   else if (a === "addHol") {
     const f = document.getElementById("hFrom").value, t = document.getElementById("hTo").value || f, n = document.getElementById("hName").value.trim() || "학원 휴일";
@@ -942,6 +979,38 @@ document.getElementById("app").addEventListener("change", e => {
   if (e.target.id === "nTitle") { ui.noticeTitle = e.target.checked; drawNotice(); return; }
   if (e.target.id === "pickDay" && e.target.value) { ui.date = e.target.value; render(); } });
 
+// ---------- 부모님 알림: 문자 앱이나 카톡으로 보낼 내용을 준비해요 ----------
+const CFG0 = {academy:"", inMsg:"[{학원}] {이름} 학생이 {시간}에 학원에 도착했어요.", outMsg:"[{학원}] {이름} 학생이 {시간}에 수업을 마치고 하원했어요.", notify:true};
+const cfg = () => ({...CFG0, ...(S.cfg.main || {})});
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function smsHref(tels, body){
+  const nums = tels.map(t => t.replace(/[^0-9+]/g, "")).filter(Boolean), b = encodeURIComponent(body);
+  return isIOS ? (nums.length > 1 ? `sms:/open?addresses=${nums.join(",")}&body=${b}` : `sms:${nums[0] || ""}&body=${b}`) : `sms:${nums.join(",")}?body=${b}`;
+}
+function notifySheet(sid, kind, iso){
+  const s = S.students[sid], c = cfg();
+  if (!s || !c.notify) return;
+  const ps = (s.parents || []).filter(p => p.tel);
+  if (!ps.length) return toast(`${s.name} 학생은 부모님 연락처가 없어요. 학생 정보에서 넣을 수 있어요.`);
+  const fill = t => (c.academy ? t : t.replaceAll("[{학원}] ", "")).replaceAll("{이름}", s.name).replaceAll("{시간}", hm(iso)).replaceAll("{학원}", c.academy);
+  const body = fill(kind === "in" ? c.inMsg : c.outMsg);
+  openSheet(`<div class="row"><h3>${esc(s.name)} ${kind === "in" ? "출석" : "하원"} 알림</h3><span class="spacer"></span><button class="btn ghost" data-close>닫기</button></div>
+    <div class="hint">받는 사람: ${ps.map(p => esc((p.rel ? p.rel + " " : "") + p.tel)).join(", ")}</div>
+    <textarea class="in" id="nBody" rows="3" maxlength="300">${esc(body)}</textarea>
+    <div class="row"><button class="btn primary" data-sms>문자 보내기</button><button class="btn" data-share>카카오톡 등으로 보내기</button></div>
+    <div class="hint">문자 앱이 받는 사람과 내용이 채워진 채로 열려요. 보내기만 누르면 돼요.</div>`, el => {
+    el.addEventListener("click", async ev => {
+      const t = ev.target.closest("button"); if (!t) return;
+      const text = el.querySelector("#nBody").value;
+      if (t.hasAttribute("data-close")) closeSheet();
+      else if (t.hasAttribute("data-sms")) { location.href = smsHref(ps.map(p => p.tel), text); closeSheet(); }
+      else if (t.hasAttribute("data-share")) {
+        if (navigator.share) { try { await navigator.share({text}); closeSheet(); } catch(e){} }
+        else { try { await navigator.clipboard.writeText(text); toast("내용을 복사했어요. 카카오톡에 붙여 넣어 주세요."); closeSheet(); } catch(e){ toast("이 기기에서는 공유를 쓸 수 없어요."); } }
+      }
+    });
+  });
+}
 function exportBackup(){
   const data = {app:"academy-attendance", version:1, exportedAt:new Date().toISOString(), data:S};
   const blob = new Blob([JSON.stringify(data, null, 1)], {type:"application/json"});
