@@ -56,7 +56,7 @@ async function register(ask){
   try {
     if (!self.FCM_VAPID_KEY) { state = "nokey"; return render(); }
     if (ask) { const p = await Notification.requestPermission(); if (p !== "granted") { state = "denied"; return render(); } }
-    const reg = await navigator.serviceWorker.register("sw.js", {scope: "./"});
+    const reg = await navigator.serviceWorker.register("sw.js", {scope: "./", updateViaCache: "none"}); reg.update().catch(() => {});
     await navigator.serviceWorker.ready;
     const token = await firebase.messaging().getToken({vapidKey: self.FCM_VAPID_KEY, serviceWorkerRegistration: reg});
     if (!token) throw new Error("no token");
@@ -85,7 +85,7 @@ function render(){
     } else if (!pushReady()) {
       h += `<div class="card"><div class="no">이 브라우저에서는 알림을 받을 수 없어요.</div><div class="muted">휴대폰의 Chrome이나 Safari로 열어 주세요.</div></div>`;
     } else if (state === "on") {
-      h += `<div class="card"><div class="ok">✓ 알림을 받고 있어요</div><div class="muted">학생이 학원에 도착하거나 하원하면 이 휴대폰으로 알려 드려요. 앱을 닫아 두셔도 돼요.</div></div>`;
+      h += `<div class="card"><div class="ok">✓ 알림을 받고 있어요</div><div class="muted">학생이 학원에 도착하거나 하원하면 이 휴대폰으로 알려 드려요. 앱을 닫아 두셔도 돼요.</div><button class="btn" id="test">이 휴대폰에 알림이 뜨는지 확인</button></div>`;
     } else {
       h += `<div class="card"><button class="btn primary" id="on">알림 받기</button>
         ${state === "denied" ? `<div class="no">알림이 꺼져 있어요. 휴대폰 설정에서 이 앱의 알림을 허용한 뒤 다시 눌러 주세요.</div>` : ""}
@@ -99,6 +99,7 @@ function render(){
 }
 document.getElementById("app").addEventListener("click", e => {
   if (e.target.id === "on") register(true);
+  if (e.target.id === "test") navigator.serviceWorker.ready.then(r => r.showNotification("출결 알림", {body: "알림이 잘 떠요. 출석·하원 때 이렇게 알려 드려요.", icon: "../icon-192.png"})).catch(() => {});
   if (e.target.id === "add") {
     const c = codeOf(document.getElementById("code").value);
     if (!c) return alertMsg();

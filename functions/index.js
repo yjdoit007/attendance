@@ -35,8 +35,9 @@ exports.notifyParents = functions.region("asia-northeast3").firestore.document("
   const body = (cfg.academy ? tpl : tpl.replaceAll("[{학원}] ", "")).replaceAll("{이름}", s.name).replaceAll("{시간}", seoulTime(at)).replaceAll("{학원}", cfg.academy);
   const res = await admin.messaging().sendEachForMulticast({
     tokens: devs.docs.map(d => d.data().token),
-    notification: {title: cfg.academy || "출결 알림", body},
-    webpush: {notification: {icon: APP_URL + "icon-192.png"}, fcmOptions: {link: APP_URL + "p/"}},
+    // 알림 내용은 data로 보내고, 부모님 휴대폰의 p/sw.js가 직접 띄워요.
+    data: {title: cfg.academy || "출결 알림", body, link: APP_URL + "p/", tag: `${a.sid}-${kind}-${a.date}`},
+    webpush: {headers: {Urgency: "high", TTL: "86400"}},
   });
   functions.logger.info(`보냄 ${s.name} ${kind}: 성공 ${res.successCount}, 실패 ${res.failureCount}`, res.responses.filter(r => r.error).map(r => r.error.code));
   // 앱을 지웠거나 알림을 끈 휴대폰은 목록에서 정리해요.
